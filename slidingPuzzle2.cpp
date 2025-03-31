@@ -1,7 +1,14 @@
 #include <bits/stdc++.h>
+#include <sys/resource.h>
+#include "boost/multi_array.hpp"
 using namespace std;
 
+#define HASH 3
+#define SIZE 16
+
 typedef enum direction {UP, DOWN, LEFT, RIGHT} direction;
+typedef enum Plist {OPEN, CLOSED} Plist;
+
 
 typedef struct piece {
 	int num;
@@ -25,7 +32,8 @@ typedef struct puzzle {
 	int steps;
 	vector<vector<piece>> m;
 	pair<int, int> empty;
-	int parenti, parentj;
+	array<int, SIZE> coord;
+	int ind;
 	bool operator==(puzzle x){
 		for(int i = 0; i < m.size(); i++){
 			for(int j = 0; j < m.size(); j++){
@@ -52,6 +60,10 @@ typedef struct puzzle {
 	}
 }puzzle;
 
+typedef boost::multi_array<vector<puzzle>, SIZE> puzzle_map;
+typedef puzzle_map::index Pindex;
+
+
 int manhattan(pair<int, int> coord1, pair<int, int> coord2){
 	return abs(coord1.first - coord2.first) + abs(coord1.second - coord2.second);
 }
@@ -60,7 +72,9 @@ int weight(puzzle p){
 	int w = 0;
 	for(int i = 0; i < p.m.size(); i++){
 		for(int j = 0; j < p.m.size(); j++){
-			w += manhattan({i, j}, p.m[i][j].goal)*p.m[i][j].num;
+			if(p.m[i][j].num == 0)
+				continue;
+			w += manhattan({i, j}, p.m[i][j].goal)/**p.m[i][j].num*/;
 		}
 	}
 	return w;
@@ -74,40 +88,78 @@ int find_in_row(puzzle p, vector<puzzle>& v){
 	return -1;
 }
 
-typedef struct puzzle_table{
-	vector<vector<puzzle>> pt;
-	int size;
-	puzzle_table(int s){
-		cout << "abb";
-		pt.resize(s);
-		size = s;
-	}
+int sum_row(puzzle p, int row){
+	int sum = 0;
+	for(int i = 0; i < p.m[0].size(); i++)
+		sum += p.m[row][i].num;
+	
+	return sum;
+}
 
+int sum_column(puzzle p, int column){
+	int sum = 0;
+	for(int i = 0; i < p.m[0].size(); i++)
+		sum += p.m[i][column].num;
+	
+	return sum;
+}
+//array<Pindex, SIZE> arr = {{HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH}};
+boost::multi_array<vector<puzzle>, SIZE>* openList;
+boost::multi_array<vector<puzzle>, SIZE>* closedList;
+
+typedef struct puzzle_table{
+	Plist l;
+	int rank;
+	puzzle_table(Plist x, int y): l(x), rank(y){
+	}
 	int find(puzzle p){
-		int row = hash(p);
-		return find_in_row(p, pt[row]);
+		array<int, SIZE> coord = hash(p);
+		vector<puzzle> v;
+		if(l == OPEN)
+			v = (*openList)(coord);
+		else 
+			v = (*closedList)(coord);
+		return find_in_row(p, v);
 	}
-	void push_back(puzzle p){
-		int row = hash(p);
-		pt[row].push_back(p);
-	}
-	bool empty(){
-		for(int i = 0; i < pt.size(); i++){
-			if(!pt[i].empty())
-				return false;
-		}
-		return true;
+	void push_back(puzzle& p){
+		array<int, SIZE> coord = hash(p);
+		vector<puzzle> v;
+		if(l == OPEN)
+			(*openList)(coord).push_back(p);
+		else 
+			(*closedList)(coord).push_back(p);
 	}
 	void erase(puzzle p){
-		int row = hash(p);
-		pt[row].erase(pt[row].begin() + find_in_row(p, pt[row]));
+		array<int, SIZE> coord = hash(p);
+		if(l == OPEN)
+			(*openList)(coord).erase((*openList)(coord).begin() + find_in_row(p, (*openList)(coord)));
+		else 
+			(*closedList)(coord).erase((*closedList)(coord).begin() + find_in_row(p, (*closedList)(coord)));
 	}
 
-	int hash(puzzle p){
-		return (weight(p)) % size;
+	array<int, SIZE> hash(puzzle p){
+		array<int, SIZE> coord;
+		/*coord[0] = weight(p) % HASH;
+		coord[1] = p.steps % HASH;
+		coord[2] = sum_row(p, 0) % HASH;
+		coord[3] = sum_column(p, 0) % HASH;
+		*/
+		int aux = 0;
+		for(int i = 0; i < rank; i++){	
+			for(int j = 0; j < rank; j++){
+				coord[aux] = p.m[i][j].num % HASH;
+				aux++;
+			}
+		}
+		return coord;
 	}
-	puzzle get(int i, int j){
-		return pt[i].at(j);
+	puzzle get(array<int, SIZE> coord, int ind){
+		vector<puzzle> v;
+		if(l == OPEN)
+			v = (*openList)(coord);
+		else 
+			v = (*closedList)(coord);
+		return v.at(ind);
 	}
 
 }puzzle_table;
@@ -167,23 +219,23 @@ void print_puzzle(puzzle p){
 }
 
 void backtrack(puzzle p, puzzle_table& closed){
-	if(p.parenti == -1){
+	if(p.ind == -1){
 		print_puzzle(p);
 		return;
 	}
-	puzzle parent = closed.get(p.parenti, p.parentj);
+	puzzle parent = closed.get(p.coord, p.ind);
 	backtrack(parent, closed);
 	print_puzzle(p);
 }
 
 void astar(puzzle begin){
 	cout << "begin astar\n";
-	puzzle_table closed(100);
-	puzzle_table open(100);
+	puzzle_table closed(CLOSED, begin.m.size());
+	puzzle_table open(OPEN, begin.m.size());
 	open.push_back(begin);
 	priority_queue<pair<int, puzzle>> pq;
 	pq.push({- (weight(begin) + begin.steps), begin});
-	while(!open.empty()){
+	while(true){
 		puzzle current = pq.top().second;
 		pq.pop();
 		closed.push_back(current);
@@ -191,8 +243,9 @@ void astar(puzzle begin){
 		vector<puzzle> adj = get_adj(current);
 		
 		for(int i = 0; i < adj.size(); i++){
-			adj[i].parenti = closed.hash(current);
-			adj[i].parentj = closed.pt[adj[i].parenti].size() - 1;
+			adj[i].coord = closed.hash(current);
+			array<int, SIZE> coord = adj[i].coord;
+			adj[i].ind = (*closedList)(coord).size() - 1;
 			if(weight(adj[i]) == 0){
 				backtrack(adj[i], closed);
 				return;
@@ -227,11 +280,17 @@ puzzle begin_puzzle(int rank){
 		begin.m.push_back(row);
 	}
 	begin.steps = 0;
-	begin.parenti = begin.parentj = -1;
+	begin.ind = -1;
 	return begin;
 }
 
 int main(){
+	array<Pindex, SIZE> arr;
+	for(int i = 0; i < SIZE; i++){
+		arr[i] = HASH;
+	}
+	openList = new puzzle_map(arr);
+	closedList = new puzzle_map(arr);
 	int rank;
 	cin >> rank;
 	puzzle begin = begin_puzzle(rank);
