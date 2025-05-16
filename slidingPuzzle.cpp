@@ -1,13 +1,13 @@
 #include <bits/stdc++.h>
 #include <sys/resource.h>
 #include "boost/multi_array.hpp"
+#include <boost/multi_index/hashed_index.hpp>
+#include <boost/unordered_map.hpp>
+
+
 using namespace std;
 
-#define HASH 3
-#define SIZE 16
-
 typedef enum direction {UP, DOWN, LEFT, RIGHT} direction;
-typedef enum Plist {OPEN, CLOSED} Plist;
 
 
 typedef struct piece {
@@ -32,8 +32,7 @@ typedef struct puzzle {
 	int steps;
 	vector<vector<piece>> m;
 	pair<int, int> empty;
-	array<int, SIZE> coord;
-	int ind;
+	size_t p_coord;
 	bool operator==(puzzle x){
 		for(int i = 0; i < m.size(); i++){
 			for(int j = 0; j < m.size(); j++){
@@ -59,10 +58,6 @@ typedef struct puzzle {
 		else return false;
 	}
 }puzzle;
-
-typedef boost::multi_array<vector<puzzle>, SIZE> puzzle_map;
-typedef puzzle_map::index Pindex;
-
 
 int manhattan(pair<int, int> coord1, pair<int, int> coord2){
 	return abs(coord1.first - coord2.first) + abs(coord1.second - coord2.second);
@@ -103,66 +98,17 @@ int sum_column(puzzle p, int column){
 	
 	return sum;
 }
-//array<Pindex, SIZE> arr = {{HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH,HASH}};
-boost::multi_array<vector<puzzle>, SIZE>* openList;
-boost::multi_array<vector<puzzle>, SIZE>* closedList;
 
-typedef struct puzzle_table{
-	Plist l;
-	int rank;
-	puzzle_table(Plist x, int y): l(x), rank(y){
-	}
-	int find(puzzle p){
-		array<int, SIZE> coord = hash(p);
-		vector<puzzle> v;
-		if(l == OPEN)
-			v = (*openList)(coord);
-		else 
-			v = (*closedList)(coord);
-		return find_in_row(p, v);
-	}
-	void push_back(puzzle& p){
-		array<int, SIZE> coord = hash(p);
-		vector<puzzle> v;
-		if(l == OPEN)
-			(*openList)(coord).push_back(p);
-		else 
-			(*closedList)(coord).push_back(p);
-	}
-	void erase(puzzle p){
-		array<int, SIZE> coord = hash(p);
-		if(l == OPEN)
-			(*openList)(coord).erase((*openList)(coord).begin() + find_in_row(p, (*openList)(coord)));
-		else 
-			(*closedList)(coord).erase((*closedList)(coord).begin() + find_in_row(p, (*closedList)(coord)));
-	}
+size_t fhash(puzzle p){
+    size_t seed = 0;
+    for(int i = 0; i < p.m.size(); i++){
+        for(int j = 0; j < p.m[i].size(); j++){
+            boost::hash_combine(seed, p.m[i][j].num);
+        }
+    }
+    return seed;
+}
 
-	array<int, SIZE> hash(puzzle p){
-		array<int, SIZE> coord;
-		/*coord[0] = weight(p) % HASH;
-		coord[1] = p.steps % HASH;
-		coord[2] = sum_row(p, 0) % HASH;
-		coord[3] = sum_column(p, 0) % HASH;
-		*/
-		int aux = 0;
-		for(int i = 0; i < rank; i++){	
-			for(int j = 0; j < rank; j++){
-				coord[aux] = p.m[i][j].num % HASH;
-				aux++;
-			}
-		}
-		return coord;
-	}
-	puzzle get(array<int, SIZE> coord, int ind){
-		vector<puzzle> v;
-		if(l == OPEN)
-			v = (*openList)(coord);
-		else 
-			v = (*closedList)(coord);
-		return v.at(ind);
-	}
-
-}puzzle_table;
 
 puzzle slide(puzzle p, direction d){
 	puzzle new_p = p;
@@ -186,6 +132,7 @@ puzzle slide(puzzle p, direction d){
 	new_p.m[i + vert][j + hori] = tmp;
 	new_p.empty = {i + vert, j + hori};
 	new_p.steps++;
+    new_p.p_coord = fhash(p);
     return new_p;
 
 }
@@ -218,34 +165,31 @@ void print_puzzle(puzzle p){
 	}
 }
 
-void backtrack(puzzle p, puzzle_table& closed){
-	if(p.ind == -1){
+void backtrack(puzzle p, boost::unordered_map<size_t, puzzle>& closed){
+	if(p.p_coord == 0){
 		print_puzzle(p);
 		return;
 	}
-	puzzle parent = closed.get(p.coord, p.ind);
+	puzzle parent = closed[p.p_coord];
 	backtrack(parent, closed);
 	print_puzzle(p);
 }
 
 void astar(puzzle begin){
 	cout << "begin astar\n";
-	puzzle_table closed(CLOSED, begin.m.size());
-	puzzle_table open(OPEN, begin.m.size());
-	open.push_back(begin);
-	priority_queue<pair<int, puzzle>> pq;
+	boost::unordered_map<size_t, puzzle> closed;
+	boost::unordered_map<size_t, puzzle> open;
+	open[fhash(begin)] = begin;
+    priority_queue<pair<long long, puzzle>> pq;
 	pq.push({- (weight(begin) + begin.steps), begin});
 	while(true){
 		puzzle current = pq.top().second;
 		pq.pop();
-		closed.push_back(current);
-		open.erase(current);
+		closed[fhash(current)] = current;
+		open.erase(fhash(current));
 		vector<puzzle> adj = get_adj(current);
 		
 		for(int i = 0; i < adj.size(); i++){
-			adj[i].coord = closed.hash(current);
-			array<int, SIZE> coord = adj[i].coord;
-			adj[i].ind = (*closedList)(coord).size() - 1;
 			if(weight(adj[i]) == 0){
 				backtrack(adj[i], closed);
 				return;
@@ -253,8 +197,8 @@ void astar(puzzle begin){
 		}
 
 		for(int i = 0; i < adj.size(); i++){
-			if(closed.find(adj[i]) == -1 && open.find(adj[i]) == -1){
-				open.push_back(adj[i]);
+			if(closed.find(fhash(adj[i])) == closed.end() && open.find(fhash(adj[i])) == open.end()){
+				open[fhash(adj[i])] = adj[i];
 				pq.push({-(weight(adj[i]) + adj[i].steps), adj[i]});
 			}
 		}
@@ -280,20 +224,24 @@ puzzle begin_puzzle(int rank){
 		begin.m.push_back(row);
 	}
 	begin.steps = 0;
-	begin.ind = -1;
+	begin.p_coord = 0;
 	return begin;
 }
 
+// 1 2 3 4 5 6 ..
+
 int main(){
-	array<Pindex, SIZE> arr;
-	for(int i = 0; i < SIZE; i++){
-		arr[i] = HASH;
-	}
-	openList = new puzzle_map(arr);
-	closedList = new puzzle_map(arr);
 	int rank;
 	cin >> rank;
 	puzzle begin = begin_puzzle(rank);
 	astar(begin);
 	return 0;
 }
+// Função de hash Coord.h:67
+
+// OpenList com hash map: PriorityList.:30
+//            hashed_unique<
+
+//tag<pos>,  BOOST_MULTI_INDEX_MEMBER(Node<N>,Coord<N>,pos)>,
+
+ 
