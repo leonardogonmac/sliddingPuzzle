@@ -165,44 +165,129 @@ void print_puzzle(puzzle p){
 	}
 }
 
-void backtrack(puzzle p, boost::unordered_map<size_t, puzzle>& closed){
+boost::unordered_map<size_t, puzzle> closed;
+boost::unordered_map<size_t, puzzle> open;
+priority_queue<pair<long long, puzzle>> pq;
+bool solved = false;
+mutex solved_mtx, closed_mtx, open_mtx, pq_mtx;
+
+puzzle pq_top(){
+    while(pq_mtx.lock(), pq.empty())
+        pq_mtx.unlock();
+    puzzle p = pq.top().second;
+    pq.pop();
+    pq_mtx.unlock();
+    return p;
+}
+
+void pq_push(puzzle p){
+    pq_mtx.lock();
+    pq.push({-(weight(p) + p.steps), p});
+    pq_mtx.unlock();
+}
+
+void closed_insert(puzzle p){
+    closed_mtx.lock();
+    closed[fhash(p)] = p;
+    closed_mtx.unlock();
+}
+
+bool closed_find(puzzle p){
+    bool ans;
+    closed_mtx.lock();
+    if(closed.find(fhash(p)) == closed.end())
+        ans = false;
+    else
+        ans = true;
+    closed_mtx.unlock();
+    return ans;
+}
+
+void open_insert(puzzle p){
+    open_mtx.lock();
+    open[fhash(p)] = p;
+    open_mtx.unlock();
+}
+
+void open_erase(puzzle p){
+    open_mtx.lock();
+    open.erase(fhash(p));
+    open_mtx.unlock();
+}
+
+bool open_find(puzzle p){
+    bool ans;
+    open_mtx.lock();
+    if(open.find(fhash(p)) == open.end())
+        ans = false;
+    else
+        ans = true;
+    open_mtx.unlock();
+    return ans;
+}
+
+
+bool solve_puzzle(){
+    solved_mtx.lock();
+    if(solved){
+        solved_mtx.unlock();
+        return false;
+    }
+    else{
+        solved = true;
+        solved_mtx.unlock();
+        return true;
+    }
+}
+
+void backtrack(puzzle p){
 	if(p.p_coord == 0){
 		print_puzzle(p);
 		return;
 	}
 	puzzle parent = closed[p.p_coord];
-	backtrack(parent, closed);
+	backtrack(parent);
 	print_puzzle(p);
 }
 
-void astar(puzzle begin){
-	cout << "begin astar\n";
-	boost::unordered_map<size_t, puzzle> closed;
-	boost::unordered_map<size_t, puzzle> open;
-	open[fhash(begin)] = begin;
-    priority_queue<pair<long long, puzzle>> pq;
-	pq.push({- (weight(begin) + begin.steps), begin});
-	while(true){
-		puzzle current = pq.top().second;
-		pq.pop();
-		closed[fhash(current)] = current;
-		open.erase(fhash(current));
+void astar_thread(){
+    cout << "Started thread\n";
+    while(true){
+        if(solved)
+            return;
+		puzzle current = pq_top();
+		closed_insert(current);
+		open_erase(current);
 		vector<puzzle> adj = get_adj(current);
 		
 		for(int i = 0; i < adj.size(); i++){
 			if(weight(adj[i]) == 0){
-				backtrack(adj[i], closed);
+                if(solve_puzzle()){
+                    backtrack(adj[i]);
+                }
 				return;
 			}
 		}
 
 		for(int i = 0; i < adj.size(); i++){
-			if(closed.find(fhash(adj[i])) == closed.end() && open.find(fhash(adj[i])) == open.end()){
-				open[fhash(adj[i])] = adj[i];
-				pq.push({-(weight(adj[i]) + adj[i].steps), adj[i]});
+			if(!closed_find(adj[i]) && !open_find(adj[i])){
+				open_insert(adj[i]);
+				pq_push(adj[i]);
 			}
 		}
 	}
+}
+
+void astar(puzzle begin, int n){
+	cout << "begin astar\n";
+	open[fhash(begin)] = begin;
+	pq.push({- (weight(begin) + begin.steps), begin});
+    vector<thread> ts;
+    for(int i = 0; i < n; i++)
+        ts.emplace_back(astar_thread);
+    
+    for(thread& t: ts)
+        t.join();
 }
 
 
@@ -234,7 +319,7 @@ int main(){
 	int rank;
 	cin >> rank;
 	puzzle begin = begin_puzzle(rank);
-	astar(begin);
+	astar(begin, 3);
 	return 0;
 }
 // Função de hash Coord.h:67
