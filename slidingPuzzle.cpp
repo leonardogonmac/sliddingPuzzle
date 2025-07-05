@@ -165,11 +165,14 @@ void print_puzzle(puzzle p){
 	}
 }
 
-boost::unordered_map<size_t, puzzle> closed;
-boost::unordered_map<size_t, puzzle> open;
+int N = 3;
+
+vector<boost::unordered_map<size_t, puzzle>> closed(N);
+vector<boost::unordered_map<size_t, puzzle>> open(N);
 priority_queue<pair<long long, puzzle>> pq;
 bool solved = false;
-mutex solved_mtx, closed_mtx, open_mtx, pq_mtx;
+mutex solved_mtx, pq_mtx;
+vector<mutex> closed_mtx(N), open_mtx(N);
 
 puzzle pq_top(){
     while(pq_mtx.lock(), pq.empty())
@@ -186,43 +189,43 @@ void pq_push(puzzle p){
     pq_mtx.unlock();
 }
 
-void closed_insert(puzzle p){
-    closed_mtx.lock();
-    closed[fhash(p)] = p;
-    closed_mtx.unlock();
+void closed_insert(puzzle p, int id){
+    closed_mtx[id].lock();
+    closed[id][fhash(p)] = p;
+    closed_mtx[id].unlock();
 }
 
-bool closed_find(puzzle p){
+bool closed_find(puzzle p, int id){
     bool ans;
-    closed_mtx.lock();
-    if(closed.find(fhash(p)) == closed.end())
+    closed_mtx[id].lock();
+    if(closed[id].find(fhash(p)) == closed[id].end())
         ans = false;
     else
         ans = true;
-    closed_mtx.unlock();
+    closed_mtx[id].unlock();
     return ans;
 }
 
-void open_insert(puzzle p){
-    open_mtx.lock();
-    open[fhash(p)] = p;
-    open_mtx.unlock();
+void open_insert(puzzle p, int id){
+    open_mtx[id].lock();
+    open[id][fhash(p)] = p;
+    open_mtx[id].unlock();
 }
 
-void open_erase(puzzle p){
-    open_mtx.lock();
-    open.erase(fhash(p));
-    open_mtx.unlock();
+void open_erase(puzzle p, int id){
+    open_mtx[id].lock();
+    open[id].erase(fhash(p));
+    open_mtx[id].unlock();
 }
 
-bool open_find(puzzle p){
+bool open_find(puzzle p, int id){
     bool ans;
-    open_mtx.lock();
-    if(open.find(fhash(p)) == open.end())
+    open_mtx[id].lock();
+    if(open[id].find(fhash(p)) == open[id].end())
         ans = false;
     else
         ans = true;
-    open_mtx.unlock();
+    open_mtx[id].unlock();
     return ans;
 }
 
@@ -240,51 +243,56 @@ bool solve_puzzle(){
     }
 }
 
-void backtrack(puzzle p){
+void backtrack(puzzle p, int id){
 	if(p.p_coord == 0){
 		print_puzzle(p);
 		return;
 	}
-	puzzle parent = closed[p.p_coord];
-	backtrack(parent);
+	puzzle parent = closed[id][p.p_coord];
+	backtrack(parent, id);
 	print_puzzle(p);
 }
 
-void astar_thread(){
+void astar_thread(int id){
     cout << "Started thread\n";
     while(true){
         if(solved)
             return;
 		puzzle current = pq_top();
-		closed_insert(current);
-		open_erase(current);
+        for(int i = 0; i < N; i++)
+		    closed_insert(current, i);
+		for(int i = 0; i < N; i++)
+            open_erase(current, i);
 		vector<puzzle> adj = get_adj(current);
 		
 		for(int i = 0; i < adj.size(); i++){
 			if(weight(adj[i]) == 0){
                 if(solve_puzzle()){
-                    backtrack(adj[i]);
+                    backtrack(adj[i], id);
                 }
 				return;
 			}
 		}
 
 		for(int i = 0; i < adj.size(); i++){
-			if(!closed_find(adj[i]) && !open_find(adj[i])){
-				open_insert(adj[i]);
+			if(!closed_find(adj[i], id) && !open_find(adj[i], id)){
 				pq_push(adj[i]);
+                for(int j = 0; j < N; j++){
+                    open_insert(adj[i], j);
+                }
 			}
 		}
 	}
 }
 
-void astar(puzzle begin, int n){
+void astar(puzzle begin){
 	cout << "begin astar\n";
-	open[fhash(begin)] = begin;
+    for(int i = 0; i < N; i++)
+    	open[i][fhash(begin)] = begin;
 	pq.push({- (weight(begin) + begin.steps), begin});
     vector<thread> ts;
-    for(int i = 0; i < n; i++)
-        ts.emplace_back(astar_thread);
+    for(int i = 0; i < N; i++)
+        ts.emplace_back(astar_thread, i);
     
     for(thread& t: ts)
         t.join();
@@ -319,7 +327,7 @@ int main(){
 	int rank;
 	cin >> rank;
 	puzzle begin = begin_puzzle(rank);
-	astar(begin, 3);
+	astar(begin);
 	return 0;
 }
 // Função de hash Coord.h:67
