@@ -169,66 +169,42 @@ int N = 3;
 
 vector<boost::unordered_map<size_t, puzzle>> closed(N);
 vector<boost::unordered_map<size_t, puzzle>> open(N);
-priority_queue<pair<long long, puzzle>> pq;
+vector<priority_queue<pair<long long, puzzle>>> pq(N);
+vector<queue<puzzle>> q(N);
 bool solved = false;
-mutex solved_mtx, pq_mtx;
-vector<mutex> closed_mtx(N), open_mtx(N);
 
-puzzle pq_top(){
-    while(pq_mtx.lock(), pq.empty())
-        pq_mtx.unlock();
-    puzzle p = pq.top().second;
-    pq.pop();
-    pq_mtx.unlock();
-    return p;
-}
-
-void pq_push(puzzle p){
-    pq_mtx.lock();
-    pq.push({-(weight(p) + p.steps), p});
-    pq_mtx.unlock();
-}
+vector<mutex> q_mtx(N);
+mutex solved_mtx;
 
 void closed_insert(puzzle p, int id){
-    closed_mtx[id].lock();
     closed[id][fhash(p)] = p;
-    closed_mtx[id].unlock();
 }
 
 bool closed_find(puzzle p, int id){
     bool ans;
-    closed_mtx[id].lock();
     if(closed[id].find(fhash(p)) == closed[id].end())
         ans = false;
     else
         ans = true;
-    closed_mtx[id].unlock();
     return ans;
 }
 
 void open_insert(puzzle p, int id){
-    open_mtx[id].lock();
     open[id][fhash(p)] = p;
-    open_mtx[id].unlock();
 }
 
 void open_erase(puzzle p, int id){
-    open_mtx[id].lock();
     open[id].erase(fhash(p));
-    open_mtx[id].unlock();
 }
 
 bool open_find(puzzle p, int id){
     bool ans;
-    open_mtx[id].lock();
     if(open[id].find(fhash(p)) == open[id].end())
         ans = false;
     else
         ans = true;
-    open_mtx[id].unlock();
     return ans;
 }
-
 
 bool solve_puzzle(){
     solved_mtx.lock();
@@ -253,16 +229,61 @@ void backtrack(puzzle p, int id){
 	print_puzzle(p);
 }
 
+size_t hash_thread(puzzle p){
+    return (fhash(p) % N);
+}
+
+void enqueue(puzzle p, size_t id){
+    q_mtx[id].lock();
+    q[id].emplace(p);
+    q_mtx[id].unlock();
+}
+
+queue<puzzle> copy_queue(int id){
+    q_mtx[id].lock();
+    queue<puzzle> cpy;
+    while(!q[id].empty()){
+        puzzle p = q[id].front();
+        q[id].pop();
+        cpy.push(p);
+    }
+    q_mtx[id].unlock();
+    return cpy;
+}
+
+void pq_push(puzzle p, int id){
+    pq[id].push({-(weight(p) + p.steps), p});
+}
+
+void dequeue(int id){
+    queue<puzzle> local = copy_queue(id);
+    while(!local.empty()){
+        puzzle p = local.front();
+        local.pop();
+        if(!closed_find(p, id) && !open_find(p, id)){
+            pq_push(p, id);
+            open_insert(p, id);
+        }
+    }
+}
+
+puzzle pq_top(int id){
+    while(pq[id].empty())
+        dequeue(id);
+    puzzle p = pq[id].top().second;
+    pq[id].pop();
+    return p;
+}
+
+
 void astar_thread(int id){
-    cout << "Started thread\n";
+    cout << "Started thread " << id << "\n";
     while(true){
         if(solved)
             return;
-		puzzle current = pq_top();
-        for(int i = 0; i < N; i++)
-		    closed_insert(current, i);
-		for(int i = 0; i < N; i++)
-            open_erase(current, i);
+		puzzle current = pq_top(id);
+		closed_insert(current, id);
+        open_erase(current, id);
 		vector<puzzle> adj = get_adj(current);
 		
 		for(int i = 0; i < adj.size(); i++){
@@ -275,21 +296,24 @@ void astar_thread(int id){
 		}
 
 		for(int i = 0; i < adj.size(); i++){
-			if(!closed_find(adj[i], id) && !open_find(adj[i], id)){
-				pq_push(adj[i]);
-                for(int j = 0; j < N; j++){
-                    open_insert(adj[i], j);
-                }
-			}
+            size_t t_index = hash_thread(adj[i]);
+			if(t_index == id && !closed_find(adj[i], id) && !open_find(adj[i], id)){
+                pq_push(adj[i], id);
+                open_insert(adj[i], id);
+            }
+            else
+                enqueue(adj[i], t_index);
 		}
+        dequeue(id);
 	}
 }
 
 void astar(puzzle begin){
 	cout << "begin astar\n";
-    for(int i = 0; i < N; i++)
+    for(int i = 0; i < N; i++){
     	open[i][fhash(begin)] = begin;
-	pq.push({- (weight(begin) + begin.steps), begin});
+	    pq[i].push({- (weight(begin) + begin.steps), begin});
+    }
     vector<thread> ts;
     for(int i = 0; i < N; i++)
         ts.emplace_back(astar_thread, i);
