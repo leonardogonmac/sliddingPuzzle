@@ -165,7 +165,7 @@ void print_puzzle(puzzle p){
 	}
 }
 
-int N = 3;
+int N = 5;
 
 vector<boost::unordered_map<size_t, puzzle>> closed(N);
 vector<boost::unordered_map<size_t, puzzle>> open(N);
@@ -268,8 +268,11 @@ void dequeue(int id){
 }
 
 puzzle pq_top(int id){
-    while(pq[id].empty())
+    while(pq[id].empty()){
+        if(solved)
+            return puzzle();
         dequeue(id);
+    }
     puzzle p = pq[id].top().second;
     pq[id].pop();
     return p;
@@ -279,9 +282,9 @@ puzzle pq_top(int id){
 void astar_thread(int id){
     cout << "Started thread " << id << "\n";
     while(true){
+		puzzle current = pq_top(id);
         if(solved)
             return;
-		puzzle current = pq_top(id);
 		closed_insert(current, id);
         open_erase(current, id);
 		vector<puzzle> adj = get_adj(current);
