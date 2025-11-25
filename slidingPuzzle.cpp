@@ -1,6 +1,5 @@
 #include <bits/stdc++.h>
 #include <sys/resource.h>
-#include "boost/multi_array.hpp"
 #include <boost/multi_index/hashed_index.hpp>
 #include <boost/unordered_map.hpp>
 
@@ -224,7 +223,13 @@ void backtrack(puzzle p, int id){
 		print_puzzle(p);
 		return;
 	}
-	puzzle parent = closed[id][p.p_coord];
+	puzzle parent;
+    
+    for(auto c: closed){
+        if(c.count(p.p_coord))
+            parent = c[p.p_coord];
+    }
+
 	backtrack(parent, id);
 	print_puzzle(p);
 }
@@ -304,7 +309,7 @@ void astar_thread(int id){
                 pq_push(adj[i], id);
                 open_insert(adj[i], id);
             }
-            else
+			else
                 enqueue(adj[i], t_index);
 		}
         dequeue(id);
